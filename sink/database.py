@@ -9,51 +9,76 @@ from . import misc
 
 
 
-@fig.component('file-db')
+# @fig.component('file-db')
 class FileDatabase(fig.Configurable):
 	def __init__(self, db_path=misc.data_root()/'files.db', chunksize=1024*1024):
 		self.db_path = db_path
 		self.chunksize = chunksize
+		self.conn = sqlite3.connect(self.db_path)
 		self.init_database()
-		# self.conn = sqlite3.connect(self.db_path)
-
+		self._report_id = None
 
 	def init_database(self):
-		conn = sqlite3.connect(self.db_path)
+		# conn = sqlite3.connect(self.db_path)
+		conn = self.conn
 		cursor = conn.cursor()
+		cursor.execute('''
+		    CREATE TABLE IF NOT EXISTS reports (
+		        id INTEGER PRIMARY KEY AUTOINCREMENT,
+		        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		        description TEXT
+		    )''')
 		cursor.execute('''
 			CREATE TABLE IF NOT EXISTS files (
 				path TEXT PRIMARY KEY,
-				status TEXT
+				report INTEGER NOT NULL,
+				status TEXT,
 				hash TEXT,
 				filesize INTEGER,
 				modification_time REAL,
-			)
-		''')
+				FOREIGN KEY (report) REFERENCES reports(id)
+			)''')
 		conn.commit()
+		# conn.close()
+
+	def create_report_id(self, description=None):
+		# conn = sqlite3.connect(self.db_path)
+		conn = self.conn
+		cursor = conn.cursor()
+		cursor.execute('INSERT INTO reports (description) VALUES (?)', (description,))
+		conn.commit()
+		report_id = cursor.lastrowid
 		conn.close()
+		return report_id
+
+	def set_report_id(self, report_id):
+		self._report_id = report_id
+	def get_report_id(self, description=None):
+		if self._report_id is None:
+			self._report_id = self.create_report_id(description)
+		return self._report_id
 
 
 	def compute_hash(self, file_path):
-		hasher = hashlib.sha256()
-		chunk_size = self.chunksize
-		with open(file_path, 'rb') as f:
-			while True:
-				data = f.read(chunk_size)
-				if not data:
-					break
-				hasher.update(data)
-		return hasher.hexdigest()
+		return misc.md5_hash(file_path, chunksize=self.chunksize)
 
 
 	def compute_directory_hash(self, content_hashes: list[str]):
-		combined_checksums = ''.join(content_hashes).encode()
-		return hashlib.sha256(combined_checksums).hexdigest()
+		if not len(content_hashes):
+			return ''
+		code = content_hashes[0]
+		for h in content_hashes[1:]:
+			code = misc.xor_hexdigests(code, h)
+		return code
 
 
 	def compute_directory_info(self, dir_path, content_info):
-		metadatas, hashes = zip(*content_info)
-		filesizes, modification_times = zip(*metadatas)
+		if len(content_info) == 0:
+			metadatas, hashes = [], []
+			filesizes, modification_times = [], []
+		else:
+			metadatas, hashes = zip(*content_info)
+			filesizes, modification_times = zip(*metadatas)
 		directory_hash = self.compute_directory_hash(hashes)
 		dirsize = sum(filesizes)
 		modification_time = os.path.getmtime(dir_path)
@@ -69,21 +94,25 @@ class FileDatabase(fig.Configurable):
 
 
 	def save_file_info(self, file_path, file_info, status='completed'):
-		conn = sqlite3.connect(self.db_path)
+		# conn = sqlite3.connect(self.db_path)
+		conn = self.conn
 		cursor = conn.cursor()
 
 		file_hash, metadata = file_info
+		hash_val = file_hash
+		# hash_val = None if file_hash is None else misc.hex2int(file_hash)
 
 		cursor.execute('''
-			INSERT OR REPLACE INTO files (path, status, hash, filesize, modification_time)
-			VALUES (?, ?, ?, ?, ?)
-		''', (file_path, status, file_hash, *metadata))
+			INSERT OR REPLACE INTO files (path, report, status, hash, filesize, modification_time)
+			VALUES (?, ?, ?, ?, ?, ?)
+		''', (file_path, self.get_report_id(), status, hash_val, *metadata))
 		conn.commit()
-		conn.close()
+		# conn.close()
 
 
 	def find_path(self, path, status='completed'):
-		conn = sqlite3.connect(self.db_path)
+		# conn = sqlite3.connect(self.db_path)
+		conn = self.conn
 		cursor = conn.cursor()
 		# find matching records
 		query = 'SELECT hash, filesize, modification_time FROM files WHERE path=? AND status=?'
@@ -91,13 +120,32 @@ class FileDatabase(fig.Configurable):
 		if cursor.rowcount == 0:
 			return None
 		info = cursor.fetchone()
-		conn.close()
-		file_hash, *metadata = info
-		return file_hash, metadata
+		if info is not None:
+			hash_val, *metadata = info
+			# file_hash = None if hash_val is None else misc.int2hex(hash_val)
+			file_hash = hash_val
+			return file_hash, metadata
+
+
+	def exists(self, path, status='completed'):
+		conn = self.conn
+		cursor = conn.cursor()
+
+		if status is None:
+			query = 'SELECT COUNT(*) FROM files WHERE path=?'
+			cursor.execute(query, (path,))
+		else:
+			query = 'SELECT COUNT(*) FROM files WHERE path=? AND status=?'
+			cursor.execute(query, (path, status))
+
+		count = cursor.fetchone()[0]
+		return count > 0
+
 
 
 	def find_all(self, root=None, status='completed'):
-		conn = sqlite3.connect(self.db_path)
+		# conn = sqlite3.connect(self.db_path)
+		conn = self.conn
 		cursor = conn.cursor()
 
 		if root:
@@ -108,10 +156,12 @@ class FileDatabase(fig.Configurable):
 			cursor.execute(query, (status,))
 
 		for row in cursor.fetchall():
-			path, file_hash, *metadata = row
-			yield path, file_hash, metadata
+			path, hash_val, *metadata = row
+			# file_hash = None if hash_val is None else misc.int2hex(hash_val)
+			file_hash = hash_val
+			yield path, (file_hash, metadata)
 
-		conn.close()
+		# conn.close()
 
 
 

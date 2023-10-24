@@ -8,7 +8,7 @@ import omnifig as fig
 from multiprocessing import Pool, cpu_count
 
 from . import misc
-from .checking import compute_file_checksum, compute_directory_checksum
+# from .checking import compute_file_checksum, compute_directory_checksum
 
 
 

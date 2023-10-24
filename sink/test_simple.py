@@ -1,5 +1,5 @@
 
-from .checking import compute_checksum
+# from .checking import compute_checksum
 
 
 # def test_checking():
