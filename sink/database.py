@@ -68,16 +68,19 @@ class FileDatabase(fig.Configurable):
 			return ''
 		code = content_hashes[0]
 		for h in content_hashes[1:]:
-			code = misc.xor_hexdigests(code, h)
+			if code is None or len(code) == 0:
+				code = h
+			elif h is not None and len(h):
+				code = misc.xor_hexdigests(code, h)
 		return code
 
 
 	def compute_directory_info(self, dir_path, content_info):
 		if len(content_info) == 0:
-			metadatas, hashes = [], []
+			hashes, metadatas = [], []
 			filesizes, modification_times = [], []
 		else:
-			metadatas, hashes = zip(*content_info)
+			hashes, metadatas = zip(*content_info)
 			filesizes, modification_times = zip(*metadatas)
 		directory_hash = self.compute_directory_hash(hashes)
 		dirsize = sum(filesizes)
@@ -91,6 +94,17 @@ class FileDatabase(fig.Configurable):
 		metadata = size, modification_time
 		file_hash = self.compute_hash(file_path)
 		return file_path, (file_hash, metadata)
+
+
+	def process_dir(self, dir_path):
+		contents = []
+		for name in os.listdir(dir_path):
+			content_path = os.path.join(dir_path, name)
+			info = self.find_path(content_path)
+			if info is None:
+				raise ValueError(f'Unknown path: {content_path}')
+			contents.append(info)
+		return self.compute_directory_info(dir_path, contents)
 
 
 	def save_file_info(self, file_path, file_info, status='completed'):

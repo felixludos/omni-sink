@@ -13,6 +13,7 @@ from . import misc
 from .database import FileDatabase
 
 
+
 def recursive_marker(db: FileDatabase, marked_paths, path, pbar=None):
 	if not db.exists(path):
 		if os.path.isdir(path):
@@ -27,53 +28,61 @@ def recursive_marker(db: FileDatabase, marked_paths, path, pbar=None):
 
 
 
-def worker_process_fn(todo_queue, lock, db_path, report_id, pbar=None, final_path=None):
+# def worker_process_fn(todo_queue, lock, db_path, report_id, pbar=None):
+# 	db = FileDatabase(db_path)
+# 	db.set_report_id(report_id)
+#
+# 	while True:
+# 		path = todo_queue.get()
+# 		if path is None:
+# 			break
+#
+# 		info = db.find_path(path)
+#
+# 		if info is None:
+# 			if os.path.isfile(path):
+# 				savepath, info = db.process_file(path)
+#
+# 			elif os.path.isdir(path):
+# 				savepath, info = db.process_dir(path)
+#
+# 			else:
+# 				print(f"Unknown path type: {path}")
+# 				continue
+#
+# 			with lock:
+# 				db.save_file_info(savepath, info)
+#
+# 		if pbar is not None:
+# 			pbar.update(1)
+#
+# 	print("Worker process exiting normally")
+
+
+
+def simple_worker_fn(path, lock, db_path, report_id, pbar=None):
 	db = FileDatabase(db_path)
 	db.set_report_id(report_id)
 
-	while True:
-		path = todo_queue.get()
-		if path is None:
-			break
+	info = db.find_path(path)
 
-		info = db.find_path(path)
+	if info is None:
+		if os.path.isfile(path):
+			savepath, info = db.process_file(path)
 
-		if info is None:
-			if os.path.isfile(path):
-				savepath, info = db.process_file(path)
-
-			elif os.path.isdir(path):
-				collector = Queue()
-
-				contents = os.listdir(path)
-				for sub in contents:
-					subpath = os.path.join(path, sub)
-					todo_queue.put((subpath, collector))
-
-				infos = []
-				while len(infos) != len(contents):
-					subpath, info = collector.get()
-					infos.append(info)
-
-				savepath, info = db.compute_directory_info(path, infos)
-
-			else:
-				print(f"Unknown path type: {path}")
-				continue
-
-			with lock:
-				db.save_file_info(savepath, info)
+		elif os.path.isdir(path):
+			savepath, info = db.process_dir(path)
 
 		else:
-			savepath = path
+			raise ValueError(f"Unknown path type: {path}")
 
-		if pbar is not None:
-			pbar.update(1)
+		with lock:
+			db.save_file_info(savepath, info)
 
-		if final_path is not None and savepath == final_path:
-			break
+	if pbar is not None:
+		pbar.update(1)
 
-	print("Worker process exiting normally")
+	# print("Worker process exiting normally")
 
 
 
@@ -86,45 +95,29 @@ def process(cfg: fig.Configuration):
 	db = FileDatabase(db_path, chunksize=chunksize)
 
 	num_workers = cfg.pulls('num-workers', 'w', default=cpu_count())
-
-	use_pbar = cfg.pull('pbar', True)
-
 	path = Path(cfg.pulls('path', 'p')).absolute()
 
 	print('Marking files for processing')
 	marked_paths = []
 	recursive_marker(db, marked_paths, str(path))
 
-	print(f'Found {len(marked_paths)} files to process.')
+	total = len(marked_paths)
+	print(f'Found {total} files to process using {num_workers} workers')
 
 	report_id = db.get_report_id(cfg.pull('description', None))
 
-	task_queue = Queue()
+	# task_queue = Queue()
 	lock = Lock()
-
-	total = len(marked_paths)
 	print(f'Starting processing {path} ({total} files)')
 
-	pbar = tqdm(total=total) if use_pbar else None
+	pbar = tqdm(total=total) if cfg.pull('pbar', True) else None
 
-	workers = [Process(target=worker_process_fn, args=(task_queue, lock, db_path, report_id, pbar))] \
-		if num_workers is not None and num_workers > 0 else None
-
-	for path in marked_paths:
-		task_queue.put(path)
-
-	if workers is None:
-		worker_process_fn(task_queue, lock, db_path, report_id, pbar, final_path=path)
+	if num_workers == 0:
+		for mark in marked_paths:
+			simple_worker_fn(mark, lock, db_path, report_id, pbar)
 	else:
-		for _ in range(num_workers):
-			task_queue.put(None)
-		for w in workers:
-			w.start()
-
-		print(f'Killing workers')
-
-		for w in workers:
-			w.join()
+		with Pool(num_workers) as p:
+			p.starmap(simple_worker_fn, [(mark, lock, db_path, report_id, pbar) for mark in marked_paths])
 
 	print(f'Done processing {path}')
 
