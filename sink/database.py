@@ -14,13 +14,13 @@ class FileDatabase(fig.Configurable):
 	def __init__(self, db_path=misc.data_root()/'files.db', chunksize=1024*1024):
 		self.db_path = db_path
 		self.chunksize = chunksize
-		self.conn = sqlite3.connect(self.db_path)
+		# self.conn = sqlite3.connect(self.db_path)
 		self.init_database()
 		self._report_id = None
 
 	def init_database(self):
-		# conn = sqlite3.connect(self.db_path)
-		conn = self.conn
+		conn = sqlite3.connect(self.db_path)
+		# conn = self.conn
 		cursor = conn.cursor()
 		cursor.execute('''
 		    CREATE TABLE IF NOT EXISTS reports (
@@ -39,11 +39,11 @@ class FileDatabase(fig.Configurable):
 				FOREIGN KEY (report) REFERENCES reports(id)
 			)''')
 		conn.commit()
-		# conn.close()
+		conn.close()
 
 	def create_report_id(self, description=None):
-		# conn = sqlite3.connect(self.db_path)
-		conn = self.conn
+		conn = sqlite3.connect(self.db_path)
+		# conn = self.conn
 		cursor = conn.cursor()
 		cursor.execute('INSERT INTO reports (description) VALUES (?)', (description,))
 		conn.commit()
@@ -108,8 +108,8 @@ class FileDatabase(fig.Configurable):
 
 
 	def save_file_info(self, file_path, file_info, status='completed'):
-		# conn = sqlite3.connect(self.db_path)
-		conn = self.conn
+		conn = sqlite3.connect(self.db_path)
+		# conn = self.conn
 		cursor = conn.cursor()
 
 		file_hash, metadata = file_info
@@ -121,12 +121,12 @@ class FileDatabase(fig.Configurable):
 			VALUES (?, ?, ?, ?, ?, ?)
 		''', (file_path, self.get_report_id(), status, hash_val, *metadata))
 		conn.commit()
-		# conn.close()
+		conn.close()
 
 
 	def find_path(self, path, status='completed'):
-		# conn = sqlite3.connect(self.db_path)
-		conn = self.conn
+		conn = sqlite3.connect(self.db_path)
+		# conn = self.conn
 		cursor = conn.cursor()
 		# find matching records
 		query = 'SELECT hash, filesize, modification_time FROM files WHERE path=? AND status=?'
@@ -134,6 +134,7 @@ class FileDatabase(fig.Configurable):
 		if cursor.rowcount == 0:
 			return None
 		info = cursor.fetchone()
+		conn.close()
 		if info is not None:
 			hash_val, *metadata = info
 			# file_hash = None if hash_val is None else misc.int2hex(hash_val)
@@ -142,7 +143,8 @@ class FileDatabase(fig.Configurable):
 
 
 	def exists(self, path, status='completed'):
-		conn = self.conn
+		conn = sqlite3.connect(self.db_path)
+		# conn = self.conn
 		cursor = conn.cursor()
 
 		if status is None:
@@ -153,13 +155,14 @@ class FileDatabase(fig.Configurable):
 			cursor.execute(query, (path, status))
 
 		count = cursor.fetchone()[0]
+		conn.close()
 		return count > 0
 
 
 
 	def find_all(self, root=None, status='completed'):
-		# conn = sqlite3.connect(self.db_path)
-		conn = self.conn
+		conn = sqlite3.connect(self.db_path)
+		# conn = self.conn
 		cursor = conn.cursor()
 
 		if root:
@@ -175,7 +178,7 @@ class FileDatabase(fig.Configurable):
 			file_hash = hash_val
 			yield path, (file_hash, metadata)
 
-		# conn.close()
+		conn.close()
 
 
 

@@ -1,10 +1,11 @@
 
 _meta.script_name: process
+#_meta.script_name: test-mp
 
 path: data/demo
 
-#num-workers: 0
-#pbar: no
+num-workers: 1
+pbar: no
 
 
 

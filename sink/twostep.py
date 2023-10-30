@@ -4,7 +4,11 @@ from tqdm import tqdm
 from multiprocessing import Manager, Queue, Lock
 import sys
 import sqlite3
-from multiprocessing import Pool, cpu_count, Pipe, Process
+from multiprocessing import cpu_count, Pipe, Process
+from pathos.multiprocessing import ProcessingPool as Pool
+import multiprocessing
+import dill
+
 import time
 import omnifig as fig
 import asyncio
@@ -107,7 +111,8 @@ def process(cfg: fig.Configuration):
 	report_id = db.get_report_id(cfg.pull('description', None))
 
 	# task_queue = Queue()
-	lock = Lock()
+	# lock = Lock()
+	lock = None
 	print(f'Starting processing {path} ({total} files)')
 
 	pbar = tqdm(total=total) if cfg.pull('pbar', True) else None
@@ -117,7 +122,8 @@ def process(cfg: fig.Configuration):
 			simple_worker_fn(mark, lock, db_path, report_id, pbar)
 	else:
 		with Pool(num_workers) as p:
-			p.starmap(simple_worker_fn, [(mark, lock, db_path, report_id, pbar) for mark in marked_paths])
+			# p.map(simple_worker_fn, [(mark, lock, db_path, report_id, pbar) for mark in marked_paths])
+			p.map(simple_worker_fn, *zip(*[(mark, lock, db_path, report_id, pbar) for mark in marked_paths]))
 
 	print(f'Done processing {path}')
 
