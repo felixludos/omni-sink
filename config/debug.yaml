@@ -4,9 +4,8 @@ _meta.script_name: process
 
 path: data/demo
 
-num-workers: 1
-pbar: no
-
+num-workers: 0
+#pbar: no
 
 
 

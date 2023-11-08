@@ -1,13 +1,17 @@
 import os.path
 from pathlib import Path
+import time
 from tqdm import tqdm
+from contextlib import nullcontext
 from multiprocessing import Manager, Queue, Lock
 import sys
 import sqlite3
 from multiprocessing import cpu_count, Pipe, Process
-from pathos.multiprocessing import ProcessingPool as Pool
+# from pathos.multiprocessing import ProcessingPool as Pool
 import multiprocessing
 import dill
+import multiprocessing as mp
+import time
 
 import time
 import omnifig as fig
@@ -32,39 +36,38 @@ def recursive_marker(db: FileDatabase, marked_paths, path, pbar=None):
 
 
 
-# def worker_process_fn(todo_queue, lock, db_path, report_id, pbar=None):
-# 	db = FileDatabase(db_path)
-# 	db.set_report_id(report_id)
-#
-# 	while True:
-# 		path = todo_queue.get()
-# 		if path is None:
-# 			break
-#
-# 		info = db.find_path(path)
-#
-# 		if info is None:
-# 			if os.path.isfile(path):
-# 				savepath, info = db.process_file(path)
-#
-# 			elif os.path.isdir(path):
-# 				savepath, info = db.process_dir(path)
-#
-# 			else:
-# 				print(f"Unknown path type: {path}")
-# 				continue
-#
-# 			with lock:
-# 				db.save_file_info(savepath, info)
-#
-# 		if pbar is not None:
-# 			pbar.update(1)
-#
-# 	print("Worker process exiting normally")
+def worker_process_fn(todo_queue, lock, db_path, report_id, pbar=None):
+	db = FileDatabase(db_path)
+	db.set_report_id(report_id)
+
+	while True:
+		path = todo_queue.get()
+		if path is None:
+			break
+
+		info = db.find_path(path)
+
+		if info is None:
+			if os.path.isfile(path):
+				savepath, info = db.process_file(path)
+
+			elif os.path.isdir(path):
+				savepath, info = db.process_dir(path)
+
+			else:
+				raise ValueError(f"Unknown path type: {path}")
+
+			with lock or nullcontext():
+				db.save_file_info(savepath, info)
+
+		if pbar is not None:
+			pbar.update(1)
+
+	print("Worker process exiting normally")
 
 
 
-def simple_worker_fn(path, lock, db_path, report_id, pbar=None):
+def simple_worker_fn(path, lock, db_path, report_id):
 	db = FileDatabase(db_path)
 	db.set_report_id(report_id)
 
@@ -80,13 +83,9 @@ def simple_worker_fn(path, lock, db_path, report_id, pbar=None):
 		else:
 			raise ValueError(f"Unknown path type: {path}")
 
-		with lock:
-			db.save_file_info(savepath, info)
+		# with lock or nullcontext():
+		db.save_file_info(savepath, info)
 
-	if pbar is not None:
-		pbar.update(1)
-
-	# print("Worker process exiting normally")
 
 
 
@@ -110,20 +109,46 @@ def process(cfg: fig.Configuration):
 
 	report_id = db.get_report_id(cfg.pull('description', None))
 
-	# task_queue = Queue()
-	# lock = Lock()
 	lock = None
 	print(f'Starting processing {path} ({total} files)')
 
-	pbar = tqdm(total=total) if cfg.pull('pbar', True) else None
+	pbar = cfg.pull('pbar', True)
+
+	start = time.time()
 
 	if num_workers == 0:
-		for mark in marked_paths:
-			simple_worker_fn(mark, lock, db_path, report_id, pbar)
+		itr = tqdm(marked_paths) if pbar else marked_paths
+		for mark in itr:
+			if pbar:
+				itr.set_description(str(Path(mark).relative_to(path)))
+			simple_worker_fn(mark, lock, db_path, report_id)
 	else:
-		with Pool(num_workers) as p:
-			# p.map(simple_worker_fn, [(mark, lock, db_path, report_id, pbar) for mark in marked_paths])
-			p.map(simple_worker_fn, *zip(*[(mark, lock, db_path, report_id, pbar) for mark in marked_paths]))
+		with mp.Manager() as manager:
+			todo_queue = manager.Queue()
+			lock = manager.Lock()
+
+			workers = [Process(target=worker_process_fn, args=(todo_queue, lock, db_path, report_id, pbar))
+					   for _ in range(num_workers)]
+
+			for worker in workers:
+				worker.start()
+
+			for mark in marked_paths:
+				todo_queue.put(mark)
+
+			for _ in range(num_workers):
+				todo_queue.put(None)
+
+			for worker in workers:
+				worker.join()
+
+			# pool = manager.Pool(num_workers)
+			# pool.starmap(simple_worker_fn, [(mark, lock, db_path, report_id, pbar) for mark in marked_paths])
+			# pool.close()
+
+	end = time.time()
+
+	print(f'Processing took {end-start:.2f} seconds')
 
 	print(f'Done processing {path}')
 
