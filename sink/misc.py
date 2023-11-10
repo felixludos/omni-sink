@@ -19,7 +19,7 @@ def data_root():
 # 	return ''.join(chr(ord(a) ^ ord(b)) for a, b in zip(hash1, hash2))
 
 
-def md5_hash(path, chunksize=1024*1024):
+def md5_file_hash(path, chunksize=1024*1024):
 	hasher = hashlib.md5()
 	with open(path, 'rb') as f:
 		while True:
@@ -28,6 +28,14 @@ def md5_hash(path, chunksize=1024*1024):
 				break
 			hasher.update(data)
 	return hasher.hexdigest()
+
+
+
+def md5_hash(data):
+	hasher = hashlib.md5()
+	hasher.update(data)
+	return hasher.hexdigest()
+
 
 
 def xor_hexdigests(hex1, hex2):

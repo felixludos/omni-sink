@@ -60,7 +60,13 @@ class FileDatabase(fig.Configurable):
 
 
 	def compute_hash(self, file_path):
-		return misc.md5_hash(file_path, chunksize=self.chunksize)
+		return misc.md5_file_hash(file_path, chunksize=self.chunksize)
+
+
+	def compute_data_hash(self, data):
+		if isinstance(data, str):
+			data = data.encode()
+		return misc.md5_hash(data)
 
 
 	def compute_directory_hash(self, content_hashes: list[str]):
@@ -77,15 +83,18 @@ class FileDatabase(fig.Configurable):
 
 	def compute_directory_info(self, dir_path, content_info):
 		if len(content_info) == 0:
-			hashes, metadatas = [], []
-			filesizes, modification_times = [], []
+			# hashes, metadatas = [], []
+			# filesizes, modification_times = [], []
+			modification_time = os.path.getmtime(dir_path)
+			metadata = 0, modification_time
+			directory_hash = self.compute_data_hash(dir_path)
 		else:
 			hashes, metadatas = zip(*content_info)
 			filesizes, modification_times = zip(*metadatas)
-		directory_hash = self.compute_directory_hash(hashes)
-		dirsize = sum(filesizes)
-		modification_time = os.path.getmtime(dir_path)
-		metadata = dirsize, modification_time
+			directory_hash = self.compute_directory_hash(hashes)
+			dirsize = sum(filesizes)
+			modification_time = os.path.getmtime(dir_path)
+			metadata = dirsize, modification_time
 		return dir_path, (directory_hash, metadata)
 
 
