@@ -1,20 +1,8 @@
-
-# from .checking import compute_checksum
-
-
-# def test_checking():
-#
-# 	filename = "path_to_your_file.txt"
-# 	print(f"SHA256 Checksum of {filename}: {compute_checksum(filename)}")
-#
-# 	pass
-
-
-
 import os
 import tempfile
-from FileProcessor import FileProcessor  # Assume FileProcessor class is saved in a file named FileProcessor.py
 import pytest
+
+
 
 # Creating a temporary directory and files for testing
 @pytest.fixture

@@ -6,6 +6,8 @@ from .misc import xor_hexdigests  # assuming your function is in 'your_module.py
 import os
 import tempfile
 
+
+
 def test_basic_functionality():
     hex1 = "0a74f7b7ba22fb27d6ad04f218644f98"
     hex2 = "5f3adfe45b2acdf7c0f1d9a1e8466f91"

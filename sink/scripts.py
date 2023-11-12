@@ -1,38 +1,56 @@
 
 
 from pathlib import Path
-import shutil, sys, os
+import shutil, sys, os, time
 from tqdm import tqdm
-from tabulate import tabulate
+# from tabulate import tabulate
 import omnifig as fig
-from multiprocessing import Pool, cpu_count
 
+from .database import FileDatabase
 from . import misc
-# from .checking import compute_file_checksum, compute_directory_checksum
+from .processing import recursive_marker, process_path
 
 
 
+@fig.script('add', description='Process a given path (add hashes and meta info to database)')
+def collect_files(cfg: fig.Configuration):
 
-def worker(files):
-	checksums = {}
-	for file_path in files:
-		checksum = compute_file_checksum(file_path)
-		if checksum in checksums:
-			checksums[checksum].append(file_path)
-		else:
-			checksums[checksum] = [file_path]
-	return checksums
+	db_path = cfg.pull('db-path', misc.data_root()/'files.db')
+	chunksize = cfg.pull('chunksize', 1024*1024)
+
+	db = FileDatabase(db_path, chunksize=chunksize)
+
+	path = Path(cfg.pulls('path', 'p')).absolute()
+
+	print('Marking files for processing')
+	marked_paths = []
+	recursive_marker(db, marked_paths, str(path))
+
+	total = len(marked_paths)
+
+	print(f'Found {total} files to process')
+
+	report_id = db.get_report_id(cfg.pull('description', None))
+
+	print(f'Starting processing {path} ({total} files)')
+
+	pbar = cfg.pull('pbar', True)
+
+	start = time.time()
+
+	itr = tqdm(marked_paths) if pbar else marked_paths
+	for mark in itr:
+		if pbar:
+			itr.set_description(str(Path(mark).relative_to(path)))
+		process_path(db, mark)
+
+	end = time.time()
+
+	print(f'Processing took {end-start:.2f} seconds')
+
+	print(f'Done processing {path}')
 
 
-# @fig.script('kount')
-# def kount(cfg: fig.Configuration):
-# 	pass
-
-
-# # Testing the top-level script
-# processor = FileProcessor("/mnt/data/files.db")
-# directory_info = processor.process_directory("/mnt/data/sample_dir")
-# get_all_file_info("/mnt/data/files.db")  # Should include info of all processed files
 
 
 
