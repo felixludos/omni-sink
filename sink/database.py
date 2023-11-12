@@ -9,7 +9,7 @@ from . import misc
 
 
 
-# @fig.component('file-db')
+@fig.component('file-db')
 class FileDatabase(fig.Configurable):
 	def __init__(self, db_path=misc.data_root()/'files.db', chunksize=1024*1024):
 		self.db_path = db_path
@@ -149,6 +149,20 @@ class FileDatabase(fig.Configurable):
 			# file_hash = None if hash_val is None else misc.int2hex(hash_val)
 			file_hash = hash_val
 			return file_hash, metadata
+
+
+
+	def find_duplicates(self, path, hash_code):
+		conn = sqlite3.connect(self.db_path)
+		cursor = conn.cursor()
+
+		query = 'SELECT path, filesize, modification_time FROM files WHERE hash=? AND path!=?'
+		cursor.execute(query, (hash_code, path))
+
+		for row in cursor.fetchall():
+			path, *metadata = row
+			yield path, metadata
+
 
 
 	def exists(self, path, status='completed'):

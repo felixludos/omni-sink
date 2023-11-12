@@ -35,6 +35,24 @@ def recursive_marker(db: FileDatabase, marked_paths, path, pbar=None):
 			pbar.update(1)
 
 
+def recursive_collect_dupes(db: FileDatabase, duplicates, path, pbar=None):
+	if pbar is not None:
+		pbar.set_description(path)
+
+	base_hash, (base_size, base_modified) = db.find_path(path)
+
+	dupes = {other: {'size': size, 'modified': modified}
+			 for other, (size, modified) in db.find_duplicates(path, base_hash)}
+
+	if len(dupes):
+		duplicates[path] = {'dupes': dupes, 'size': base_size, 'modified': base_modified}
+
+	elif os.path.isdir(path):
+		for sub in os.listdir(path):
+			subpath = os.path.join(path, sub)
+			recursive_collect_dupes(db, duplicates, subpath, pbar=pbar)
+
+
 
 def worker_process_fn(todo_queue, lock, db_path, report_id, pbar=None):
 	db = FileDatabase(db_path)
@@ -88,7 +106,6 @@ def simple_worker_fn(path, lock, db_path, report_id):
 
 
 
-
 @fig.script('process', description='Process a given path (add hashes and meta info to database)')
 def process(cfg: fig.Configuration):
 
@@ -97,7 +114,7 @@ def process(cfg: fig.Configuration):
 
 	db = FileDatabase(db_path, chunksize=chunksize)
 
-	num_workers = cfg.pulls('num-workers', 'w', default=cpu_count())
+	# num_workers = cfg.pulls('num-workers', 'w', default=cpu_count())
 	path = Path(cfg.pulls('path', 'p')).absolute()
 
 	print('Marking files for processing')
@@ -105,7 +122,8 @@ def process(cfg: fig.Configuration):
 	recursive_marker(db, marked_paths, str(path))
 
 	total = len(marked_paths)
-	print(f'Found {total} files to process using {num_workers} workers')
+	# print(f'Found {total} files to process using {num_workers} workers')
+	print(f'Found {total} files to process')
 
 	report_id = db.get_report_id(cfg.pull('description', None))
 
@@ -116,35 +134,35 @@ def process(cfg: fig.Configuration):
 
 	start = time.time()
 
-	if num_workers == 0:
-		itr = tqdm(marked_paths) if pbar else marked_paths
-		for mark in itr:
-			if pbar:
-				itr.set_description(str(Path(mark).relative_to(path)))
-			simple_worker_fn(mark, lock, db_path, report_id)
-	else:
-		with mp.Manager() as manager:
-			todo_queue = manager.Queue()
-			lock = manager.Lock()
-
-			workers = [Process(target=worker_process_fn, args=(todo_queue, lock, db_path, report_id, pbar))
-					   for _ in range(num_workers)]
-
-			for worker in workers:
-				worker.start()
-
-			for mark in marked_paths:
-				todo_queue.put(mark)
-
-			for _ in range(num_workers):
-				todo_queue.put(None)
-
-			for worker in workers:
-				worker.join()
-
-			# pool = manager.Pool(num_workers)
-			# pool.starmap(simple_worker_fn, [(mark, lock, db_path, report_id, pbar) for mark in marked_paths])
-			# pool.close()
+	# if num_workers == 0:
+	itr = tqdm(marked_paths) if pbar else marked_paths
+	for mark in itr:
+		if pbar:
+			itr.set_description(str(Path(mark).relative_to(path)))
+		simple_worker_fn(mark, lock, db_path, report_id)
+	# else:
+	# 	with mp.Manager() as manager:
+	# 		todo_queue = manager.Queue()
+	# 		lock = manager.Lock()
+	#
+	# 		workers = [Process(target=worker_process_fn, args=(todo_queue, lock, db_path, report_id, pbar))
+	# 				   for _ in range(num_workers)]
+	#
+	# 		for worker in workers:
+	# 			worker.start()
+	#
+	# 		for mark in marked_paths:
+	# 			todo_queue.put(mark)
+	#
+	# 		for _ in range(num_workers):
+	# 			todo_queue.put(None)
+	#
+	# 		for worker in workers:
+	# 			worker.join()
+	#
+	# 		# pool = manager.Pool(num_workers)
+	# 		# pool.starmap(simple_worker_fn, [(mark, lock, db_path, report_id, pbar) for mark in marked_paths])
+	# 		# pool.close()
 
 	end = time.time()
 

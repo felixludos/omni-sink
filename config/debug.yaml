@@ -2,6 +2,8 @@
 _meta.script_name: process
 #_meta.script_name: test-mp
 
+db-path: data/demo.db
+
 path: data/demo
 
 num-workers: 0
