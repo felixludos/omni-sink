@@ -1,9 +1,7 @@
-
-
 from pathlib import Path
 import shutil, sys, os, time
 from tqdm import tqdm
-# from tabulate import tabulate
+from tabulate import tabulate
 import omnifig as fig
 
 from .database import FileDatabase
@@ -15,16 +13,16 @@ from .processing import recursive_marker, process_path
 @fig.script('add', description='Process a given path (add hashes and meta info to database)')
 def collect_files(cfg: fig.Configuration):
 
-	db_path = cfg.pull('db-path', misc.data_root()/'files.db')
-	chunksize = cfg.pull('chunksize', 1024*1024)
+	db_path : Path = Path(cfg.pull('db-path', misc.data_root()/'files.db'))
+	chunksize : int = cfg.pull('chunksize', 1024*1024)
 
 	db = FileDatabase(db_path, chunksize=chunksize)
 
-	path = Path(cfg.pulls('path', 'p')).absolute()
+	path: Path = Path(cfg.pulls('path', 'p')).absolute()
 
 	print('Marking files for processing')
 	marked_paths = []
-	recursive_marker(db, marked_paths, str(path))
+	recursive_marker(db, marked_paths, path)
 
 	total = len(marked_paths)
 
@@ -34,14 +32,14 @@ def collect_files(cfg: fig.Configuration):
 
 	print(f'Starting processing {path} ({total} files)')
 
-	pbar = cfg.pull('pbar', True)
+	pbar: bool = cfg.pull('pbar', True)
 
 	start = time.time()
 
 	itr = tqdm(marked_paths) if pbar else marked_paths
 	for mark in itr:
 		if pbar:
-			itr.set_description(str(Path(mark).relative_to(path)))
+			itr.set_description(mark.relative_to(path))
 		process_path(db, mark)
 
 	end = time.time()

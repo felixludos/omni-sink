@@ -15,9 +15,9 @@ def data_root() -> Path:
 
 
 
-def md5_file_hash(path: str, chunksize: int = 1024*1024) -> str:
+def md5_file_hash(path: Path, chunksize: int = 1024*1024) -> str:
 	hasher = hashlib.md5()
-	with open(path, 'rb') as f:
+	with path.open('rb') as f:
 		while True:
 			data = f.read(chunksize)
 			if not data:

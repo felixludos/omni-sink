@@ -9,10 +9,10 @@ from . import misc
 
 @fig.component('file-db')
 class FileDatabase(fig.Configurable):
-	def __init__(self, db_path: str =str(misc.data_root()/'files.db'), chunksize: int = 1024*1024):
-		self.db_path = str(Path(db_path).absolute())
+	def __init__(self, db_path: Path | str = misc.data_root()/'files.db', chunksize: int = 1024*1024):
+		self.db_path = Path(db_path).absolute()
 		self.chunksize = chunksize
-		self.conn = sqlite3.connect(self.db_path)
+		self.conn = sqlite3.connect(str(self.db_path))
 		self.init_database()
 		self._report_id = None
 
@@ -56,7 +56,7 @@ class FileDatabase(fig.Configurable):
 		return self._report_id
 
 
-	def compute_hash(self, file_path: str) -> str:
+	def compute_hash(self, file_path: Path) -> str:
 		return misc.md5_file_hash(file_path, chunksize=self.chunksize)
 
 
@@ -80,42 +80,43 @@ class FileDatabase(fig.Configurable):
 		return code
 
 
-	def compute_directory_info(self, dir_path, content_info):
+	def compute_directory_info(self, dir_path: Path, content_info) -> tuple[Path, tuple[str, tuple]]:
 		if len(content_info) == 0:
-			# hashes, metadatas = [], []
-			# filesizes, modification_times = [], []
-			modification_time = os.path.getmtime(dir_path)
-			metadata = 0, modification_time
-			directory_hash = self.compute_data_hash(dir_path)
+			directory_hash = self.compute_data_hash(str(dir_path))
+			dirsize = 0
 		else:
 			hashes, metadatas = zip(*content_info)
 			filesizes, modification_times = zip(*metadatas)
 			directory_hash = self.compute_directory_hash(hashes)
 			dirsize = sum(filesizes)
-			modification_time = os.path.getmtime(dir_path)
-			metadata = dirsize, modification_time
+
+		modification_time = dir_path.stat().st_mtime
+		# modification_time = os.path.getmtime(dir_path)
+
+		metadata = dirsize, modification_time
 		return dir_path, (directory_hash, metadata)
 
 
-	def process_file(self, file_path):
-		size, modification_time = os.path.getsize(file_path), os.path.getmtime(file_path)
-		metadata = size, modification_time
+	def process_file(self, file_path: Path) -> tuple[Path, tuple[str, tuple]]:
 		file_hash = self.compute_hash(file_path)
+
+		size, modification_time = file_path.stat().st_size, file_path.stat().st_mtime
+		# size, modification_time = os.path.getsize(file_path), os.path.getmtime(file_path)
+		metadata = size, modification_time
 		return file_path, (file_hash, metadata)
 
 
-	def process_dir(self, dir_path):
+	def process_dir(self, dir_path: Path) -> tuple[Path, tuple[str, tuple]]:
 		contents = []
-		for name in os.listdir(dir_path):
-			content_path = os.path.join(dir_path, name)
+		for content_path in dir_path.iterdir():
 			info = self.find_path(content_path)
 			if info is None:
-				raise ValueError(f'Unknown path: {content_path}')
+				raise ValueError(f'Missing path: {content_path}')
 			contents.append(info)
 		return self.compute_directory_info(dir_path, contents)
 
 
-	def save_file_info(self, file_path, file_info, status='completed'):
+	def save_file_info(self, file_path: Path | str, file_info: tuple[str, tuple], status: str = 'completed'):
 		conn = self.conn
 		cursor = conn.cursor()
 
@@ -125,16 +126,16 @@ class FileDatabase(fig.Configurable):
 		cursor.execute('''
 			INSERT OR REPLACE INTO files (path, report, status, hash, filesize, modification_time)
 			VALUES (?, ?, ?, ?, ?, ?)
-		''', (file_path, self.get_report_id(), status, hash_val, *metadata))
+		''', (str(file_path), self.get_report_id(), status, hash_val, *metadata))
 		conn.commit()
 
 
-	def find_path(self, path, status='completed'):
+	def find_path(self, path: Path | str, status: str = 'completed'):
 		conn = self.conn
 		cursor = conn.cursor()
 
 		query = 'SELECT hash, filesize, modification_time FROM files WHERE path=? AND status=?'
-		cursor.execute(query, (path, status))
+		cursor.execute(query, (str(path), status))
 		if cursor.rowcount == 0:
 			return None
 		info = cursor.fetchone()
@@ -145,34 +146,34 @@ class FileDatabase(fig.Configurable):
 			return file_hash, metadata
 
 
-	def find_duplicates(self, path, hash_code):
+	def find_duplicates(self, path: Path | str, hash_code: str) -> tuple[Path, tuple[str, tuple]]:
 		conn = self.conn
 		cursor = conn.cursor()
 
 		query = 'SELECT path, filesize, modification_time FROM files WHERE hash=? AND path!=?'
-		cursor.execute(query, (hash_code, path))
+		cursor.execute(query, (hash_code, str(path)))
 
 		for row in cursor.fetchall():
 			path, *metadata = row
-			yield path, metadata
+			yield Path(path), metadata
 
 
-	def exists(self, path, status='completed'):
+	def exists(self, path: Path | str, status: str = 'completed') -> bool:
 		conn = self.conn
 		cursor = conn.cursor()
 
 		if status is None:
 			query = 'SELECT COUNT(*) FROM files WHERE path=?'
-			cursor.execute(query, (path,))
+			cursor.execute(query, (str(path),))
 		else:
 			query = 'SELECT COUNT(*) FROM files WHERE path=? AND status=?'
-			cursor.execute(query, (path, status))
+			cursor.execute(query, (str(path), status))
 
 		count = cursor.fetchone()[0]
 		return count > 0
 
 
-	def find_all(self, root=None, status='completed'):
+	def find_all(self, root: Path | str = None, status: str = 'completed') -> tuple[Path, tuple[str, tuple]]:
 		conn = self.conn
 		cursor = conn.cursor()
 
@@ -186,7 +187,7 @@ class FileDatabase(fig.Configurable):
 		for row in cursor.fetchall():
 			path, hash_val, *metadata = row
 			file_hash = hash_val
-			yield path, (file_hash, metadata)
+			yield Path(path), (file_hash, metadata)
 
 
 
