@@ -5,39 +5,28 @@ from .database import FileDatabase
 
 
 
-def recursive_marker(db: FileDatabase, marked_paths: list[Path], path: Path, pbar=None):
+def recursive_mark_crawl(db: FileDatabase, marked_paths: list[Path], path: Path):
+	'''post order traversal of the file tree, marking all files for processing'''
 	if path != db.db_path and not db.exists(path):
 		if path.is_dir():
 			for sub in path.iterdir():
-				recursive_marker(db, marked_paths, sub)
+				recursive_mark_crawl(db, marked_paths, sub)
 
 		marked_paths.append(path)
 
-		if pbar is not None:
-			pbar.update(1)
 
 
-
-def recursive_collect_dupes(db: FileDatabase, duplicates: dict[Path, dict], path: Path, pbar=None):
-	if pbar is not None:
-		pbar.set_description(path)
-
-	info = db.find_path(path)
-
-	if info is None:
-		raise ValueError(f'Missing path: {path} (did you forget to run `add`?)')
-
-	base_hash, (base_size, base_modified) = info
-
-	dupes = {other: {'size': size, 'modified': modified}
-			 for other, (size, modified) in db.find_duplicates(path, base_hash)}
-
-	if len(dupes):
-		duplicates[path] = {'dupes': dupes, 'size': base_size, 'modified': base_modified}
-
-	elif path.is_dir():
+def recursive_leaves_crawl(leaves: list, hits: set, path: Path, terminals: set[Path], pbar=None, get_size=None):
+	if path.is_file() or (terminals is not None and path in terminals):
+		if pbar is not None and get_size is not None:
+			pbar.set_description(f'{len(leaves)} leaves; {len(hits)} hits')
+			pbar.update(get_size(path))
+		if path in terminals:
+			hits.add(path)
+		leaves.append(path)
+	else:
 		for sub in path.iterdir():
-			recursive_collect_dupes(db, duplicates, sub, pbar=pbar)
+			recursive_leaves_crawl(leaves, hits, sub, terminals=terminals, pbar=pbar, get_size=get_size)
 
 
 
@@ -55,6 +44,27 @@ def process_path(db: FileDatabase, path: Path):
 			raise ValueError(f"Unknown path type: {path}")
 
 		db.save_file_info(savepath, info)
+
+
+
+def identify_duplicates(clusters: dict[str, list[dict]], *, pbar=None):
+	accepts = {}
+	rejects = {}
+
+	itr = clusters.items() if pbar is None else pbar(clusters.items())
+	for code, items in itr:
+		names = [item['path'].name for item in items]
+		sizes = [item['size'] for item in items]
+		modtimes = [item['modtime'] for item in items]
+
+		if (all(n == names[0] for n in names)
+				and all(s == sizes[0] for s in sizes)
+				and all(m == modtimes[0] for m in modtimes)):
+			accepts[code] = items
+		else:
+			rejects[code] = items
+
+	return accepts, rejects
 
 
 

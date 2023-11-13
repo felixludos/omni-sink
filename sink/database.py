@@ -36,6 +36,9 @@ class FileDatabase(fig.Configurable):
 				modification_time REAL,
 				FOREIGN KEY (report) REFERENCES reports(id)
 			)''')
+		cursor.execute('''
+			CREATE INDEX IF NOT EXISTS idx_hash ON files(hash);
+			''')
 		conn.commit()
 
 
@@ -156,6 +159,20 @@ class FileDatabase(fig.Configurable):
 		for row in cursor.fetchall():
 			path, *metadata = row
 			yield Path(path), metadata
+
+
+	def find_all_duplicates(self):
+		conn = self.conn
+		cursor = conn.cursor()
+
+		query = ('SELECT path, hash, filesize, modification_time '
+				 'FROM files '
+				 'WHERE hash IN (SELECT hash FROM files GROUP BY hash HAVING COUNT(*) > 1)')
+
+		cursor.execute(query)
+		for row in cursor.fetchall():
+			path, file_hash, *metadata = row
+			yield Path(path), (file_hash, metadata)
 
 
 	def exists(self, path: Path | str, status: str = 'completed') -> bool:

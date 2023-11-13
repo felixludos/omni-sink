@@ -1,12 +1,16 @@
 
-_meta.script_name: process
-#_meta.script_name: test-mp
+#_meta.script_name: add
+_meta.script_name: dedupe
 
-db-path: data/demo.db
 
-path: data/demo
+#db-path: data/demo.db
+#path: data/demo
 
-num-workers: 0
+
+db-path: data/largetest.db
+path: "D:\\Trust\\"
+
+
 #pbar: no
 
 
