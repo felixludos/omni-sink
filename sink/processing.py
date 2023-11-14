@@ -16,17 +16,16 @@ def recursive_mark_crawl(db: FileDatabase, marked_paths: list[Path], path: Path)
 
 
 
-def recursive_leaves_crawl(leaves: list, hits: set, path: Path, terminals: set[Path], pbar=None, get_size=None):
-	if path.is_file() or (terminals is not None and path in terminals):
-		if pbar is not None and get_size is not None:
-			pbar.set_description(f'{len(leaves)} leaves; {len(hits)} hits')
+def recursive_leaves_crawl(leaves: list[Path], path: Path, terminals: dict[Path, str],
+						   pbar=None, get_size=None):
+	if path in terminals or path.is_file():
+		if pbar is not None:
+			pbar.set_description(f'{" "*(10-len(leaves))}{len(leaves)} leaves')
 			pbar.update(get_size(path))
-		if path in terminals:
-			hits.add(path)
 		leaves.append(path)
 	else:
 		for sub in path.iterdir():
-			recursive_leaves_crawl(leaves, hits, sub, terminals=terminals, pbar=pbar, get_size=get_size)
+			recursive_leaves_crawl(leaves, sub, terminals=terminals, pbar=pbar, get_size=get_size)
 
 
 
@@ -49,6 +48,7 @@ def process_path(db: FileDatabase, path: Path):
 
 def identify_duplicates(clusters: dict[str, list[dict]], *, pbar=None):
 	accepts = {}
+	maybe = {}
 	rejects = {}
 
 	itr = clusters.items() if pbar is None else pbar(clusters.items())
@@ -57,14 +57,15 @@ def identify_duplicates(clusters: dict[str, list[dict]], *, pbar=None):
 		sizes = [item['size'] for item in items]
 		modtimes = [item['modtime'] for item in items]
 
-		if (all(n == names[0] for n in names)
-				and all(s == sizes[0] for s in sizes)
-				and all(m == modtimes[0] for m in modtimes)):
-			accepts[code] = items
+		if not any(s != sizes[0] for s in sizes):
+			if not any(n != names[0] for n in names) and not any(m != modtimes[0] for m in modtimes):
+				accepts[code] = items
+			else:
+				maybe[code] = items
 		else:
 			rejects[code] = items
 
-	return accepts, rejects
+	return accepts, maybe, rejects
 
 
 

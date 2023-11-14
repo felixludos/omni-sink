@@ -161,15 +161,22 @@ class FileDatabase(fig.Configurable):
 			yield Path(path), metadata
 
 
-	def find_all_duplicates(self):
+	def find_all_duplicates(self, path_prefix: Path | str = None):
 		conn = self.conn
 		cursor = conn.cursor()
 
-		query = ('SELECT path, hash, filesize, modification_time '
-				 'FROM files '
-				 'WHERE hash IN (SELECT hash FROM files GROUP BY hash HAVING COUNT(*) > 1)')
+		if path_prefix is None:
+			query = ('SELECT path, hash, filesize, modification_time '
+					 'FROM files '
+					 'WHERE hash IN (SELECT hash FROM files GROUP BY hash HAVING COUNT(*) > 1) AND filesize > 0')
+			cursor.execute(query)
+		else:
+			query = ('SELECT path, hash, filesize, modification_time '
+					 'FROM files '
+					 'WHERE hash IN (SELECT hash FROM files GROUP BY hash HAVING COUNT(*) > 1) '
+					 'AND filesize > 0 AND path LIKE ?')
+			cursor.execute(query, (f'{path_prefix}%',))
 
-		cursor.execute(query)
 		for row in cursor.fetchall():
 			path, file_hash, *metadata = row
 			yield Path(path), (file_hash, metadata)
