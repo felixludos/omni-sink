@@ -17,32 +17,15 @@ def recursive_mark_crawl(db: FileDatabase, marked_paths: list[Path], path: Path)
 
 
 def recursive_leaves_crawl(leaves: list[Path], path: Path, terminals: dict[Path, str],
-						   pbar=None, get_size=None):
+						   pbar=None, get_increment=None):
 	if path in terminals or path.is_file():
 		if pbar is not None:
 			pbar.set_description(f'{" "*(10-len(leaves))}{len(leaves)} leaves')
-			pbar.update(get_size(path))
+			pbar.update(get_increment(path))
 		leaves.append(path)
 	else:
 		for sub in path.iterdir():
-			recursive_leaves_crawl(leaves, sub, terminals=terminals, pbar=pbar, get_size=get_size)
-
-
-
-def process_path(db: FileDatabase, path: Path):
-	info = db.find_path(path)
-
-	if info is None:
-		if path.is_file():
-			savepath, info = db.process_file(path)
-
-		elif path.is_dir():
-			savepath, info = db.process_dir(path)
-
-		else:
-			raise ValueError(f"Unknown path type: {path}")
-
-		db.save_file_info(savepath, info)
+			recursive_leaves_crawl(leaves, sub, terminals=terminals, pbar=pbar, get_increment=get_increment)
 
 
 
