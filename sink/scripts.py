@@ -55,7 +55,7 @@ def add_path_to_db(cfg: fig.Configuration):
 @fig.script('dedupe', description='Finds and records duplicate files')
 def find_path_duplicates(cfg: fig.Configuration):
 
-	killpath = Path(cfg.pulls('killpath', 'out', default=misc.data_root() / 'kill.json'))
+	candidates_path = Path(cfg.pulls('candidate-path', 'out', default=misc.data_root() / 'candidates.json'))
 
 	db_path : Path = Path(cfg.pull('db-path', misc.data_root()/'files.db'))
 	db = FileDatabase(db_path)
@@ -131,20 +131,22 @@ def find_path_duplicates(cfg: fig.Configuration):
 	# filter out corner cases
 	bad_key = '00000000000000000000000000000000'
 
-	save_json([[str(path) for path in paths] for paths in ambiguous], killpath)
+	save_json([[str(path) for path in paths] for paths in ambiguous], candidates_path)
 	# save_json({
 	# 	'targets': [{str(path): terminals[path] for path in paths} for paths in ambiguous],
 	# 	'reds': [str(path) for path in reds],
 	# 	'clusters': {code: [{'path': str(info['path']), 'size': info['size'], 'modtime': info['modtime']} for info in codes[code]] for code in relevant},
 	# }, killpath)
 
-	print(f'Finds saved to {killpath}')
+	print(f'Finds saved to {candidates_path}')
 
 	return cands
 
 
 
-
+@fig.script('quarantine')
+def quarantine_targets(cfg: fig.Configuration):
+	pass
 
 
 

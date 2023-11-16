@@ -63,36 +63,29 @@ class FileDatabase(fig.Configurable):
 		return misc.md5_file_hash(file_path, chunksize=self.chunksize)
 
 
-	@staticmethod
-	def compute_data_hash(data: bytes | str) -> str:
-		if isinstance(data, str):
-			data = data.encode()
-		return misc.md5_hash(data)
+	# @staticmethod
+	# def compute_data_hash(data: bytes | str) -> str:
+	# 	if isinstance(data, str):
+	# 		data = data.encode()
+	# 	return misc.md5_hash(data)
 
 
 	@staticmethod
 	def compute_directory_hash(content_hashes: list[str]) -> str:
-		if not len(content_hashes):
-			return ''
-		code = content_hashes[0]
-		for h in content_hashes[1:]:
-			if code is None or len(code) == 0:
-				code = h
-			elif h is not None and len(h):
-				code = misc.xor_hexdigests(code, h)
-		return code
+		data = b''.join(bytes.fromhex(code) for code in sorted(content_hashes))
+		return misc.md5_hash(data)
 
 
 	def compute_directory_info(self, dir_path: Path, content_info) -> tuple[Path, tuple[str, tuple]]:
 		if len(content_info) == 0:
-			directory_hash = self.compute_data_hash(str(dir_path))
+			hashes = []
 			dirsize = 0
 		else:
 			hashes, metadatas = zip(*content_info)
 			filesizes, modification_times = zip(*metadatas)
-			directory_hash = self.compute_directory_hash(hashes)
 			dirsize = sum(filesizes)
 
+		directory_hash = self.compute_directory_hash(hashes)
 		modification_time = dir_path.stat().st_mtime
 		# modification_time = os.path.getmtime(dir_path)
 
@@ -149,12 +142,17 @@ class FileDatabase(fig.Configurable):
 			return file_hash, metadata
 
 
-	def find_duplicates(self, path: Path | str, hash_code: str) -> tuple[Path, tuple[str, tuple]]:
+	def find_duplicates(self, hash_code: str, path_prefix: Path | str = None) -> tuple[Path, tuple[str, tuple]]:
 		conn = self.conn
 		cursor = conn.cursor()
 
-		query = 'SELECT path, filesize, modification_time FROM files WHERE hash=? AND path!=?'
-		cursor.execute(query, (hash_code, str(path)))
+		if path_prefix is None:
+			query = 'SELECT path, filesize, modification_time FROM files WHERE hash=?'
+			cursor.execute(query, (hash_code,))
+
+		else:
+			query = 'SELECT path, filesize, modification_time FROM files WHERE hash=? AND path LIKE ?'
+			cursor.execute(query, (hash_code, f'{path_prefix}%'))
 
 		for row in cursor.fetchall():
 			path, *metadata = row
