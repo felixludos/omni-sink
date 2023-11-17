@@ -3,7 +3,7 @@ import shutil, sys, os, time
 from tqdm import tqdm
 from omnibelt import save_json, load_json
 from tabulate import tabulate
-from datetime import datetime
+from datetime import datetime, timedelta
 import omnifig as fig
 from functools import lru_cache
 import humanize
@@ -63,7 +63,7 @@ def add_path_to_db(cfg: fig.Configuration):
 
 	end = time.time()
 
-	print(f'Processing took {humanize.naturaltime(end-start)} seconds')
+	print(f'Processing took {humanize.precisedelta(timedelta(seconds=end-start))} seconds')
 
 	print(f'Done processing {base_path}')
 
@@ -87,7 +87,10 @@ def find_path_duplicates(cfg: fig.Configuration):
 	if base_path is None:
 		raise NotImplementedError
 
-	print('Finding duplicates')
+	pbar: bool = cfg.pull('pbar', True)
+	use_bytes: bool = cfg.pull('use-bytes', False)
+
+	# print('Finding duplicates')
 
 	base = db.find_path(base_path)
 	if base is None:
@@ -99,14 +102,12 @@ def find_path_duplicates(cfg: fig.Configuration):
 	print(tabulate([['Size', humanize.naturalsize(base.size)],
 					['Count', humanize.intcomma(base.count)]]))
 
-	pbar: bool = cfg.pull('pbar', True)
-	use_bytes: bool = cfg.pull('use-bytes', False)
 	@lru_cache(maxsize=None)
 	def get_increment(path: Path):
 		item = db.find_path(path)
 		return item.size if use_bytes else item.count
 
-	print(f'Identifying duplicates')
+	print(f'Collecting all groups of items with identical hashes within {base.path} (this may take a while)')
 
 	start = time.time()
 
@@ -118,7 +119,7 @@ def find_path_duplicates(cfg: fig.Configuration):
 
 	duplicates, possible, rejects = identify_duplicates(codes, pbar=tqdm if pbar else None)
 
-	print(f'Found {len(duplicates)} duplicates ({len(possible)} possible, {len(rejects)} rejects)')
+	print(f'Found {len(duplicates)} duplicate items ({len(possible)} possible, {len(rejects)} rejects)')
 
 	leaves = []
 
@@ -145,7 +146,7 @@ def find_path_duplicates(cfg: fig.Configuration):
 			cands.setdefault(code, []).append(path)
 
 	end = time.time()
-	print(f'Processing took {humanize.naturaltime(end-start)} seconds')
+	print(f'Processing took {humanize.precisedelta(timedelta(seconds=end-start))} seconds')
 
 	print(f'Original Size: {humanize.naturalsize(base.size)}')
 	print(f'New Size: {humanize.naturalsize(new_size)}')

@@ -1,6 +1,6 @@
 
-_meta.script_name: add
-#_meta.script_name: dedupe
+#_meta.script_name: add
+_meta.script_name: dedupe
 #_meta.script_name: quarantine
 
 
