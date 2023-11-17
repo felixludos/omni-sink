@@ -1,10 +1,30 @@
 import os
 from pathlib import Path
 import sqlite3
+from dataclasses import dataclass
+from datetime import datetime
+from functools import lru_cache
 import omnifig as fig
 
 from . import misc
 
+
+@dataclass
+class RowInfo:
+	path: Path
+	code: str = None
+	isdir: bool = None
+	count: int = None
+	size: int = None
+	modtime: float = None
+
+	@property
+	def modified(self):
+		return datetime.fromtimestamp(self.modtime)
+
+	def __post_init__(self):
+		self.path = Path(self.path)
+		self.isdir = bool(self.isdir)
 
 
 @fig.component('file-db')
@@ -17,6 +37,7 @@ class FileDatabase(fig.Configurable):
 		self._report_id = None
 
 
+	_RowInfo = RowInfo
 	def init_database(self):
 		conn = self.conn
 		cursor = conn.cursor()
@@ -100,27 +121,27 @@ class FileDatabase(fig.Configurable):
 	def process_dir(self, dir_path: Path) -> tuple[Path, tuple[str, tuple]]:
 		contents = []
 		for content_path in dir_path.iterdir():
-			info = self.find_path(content_path)
-			if info is None:
+			rawinfo = self._find_path_raw(content_path)
+			if rawinfo is None:
 				raise ValueError(f'Missing path: {content_path}')
-			contents.append(info)
+			contents.append(rawinfo)
 		return self.compute_directory_info(dir_path, contents)
 
 
-	def save_file_info(self, file_path: Path | str, file_info: tuple[str, tuple], status: str = 'completed'):
+	def save_file_info(self, file_path: Path | str, raw_info: tuple[str, tuple], status: str = 'completed'):
 		conn = self.conn
 		cursor = conn.cursor()
 
-		file_hash, metadata = file_info
+		hash_code, metadata = raw_info
 
 		cursor.execute('''
 			INSERT OR REPLACE INTO files (path, report, status, hash, isdir, filecount, filesize, modification_time)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		''', (str(file_path), self.get_report_id(), status, file_hash, *metadata))
+		''', (str(file_path), self.get_report_id(), status, hash_code, *metadata))
 		conn.commit()
 
 
-	def find_path(self, path: Path | str, status: str = 'completed'):
+	def _find_path_raw(self, path, status: str = 'completed') -> tuple[str, tuple] | None:
 		conn = self.conn
 		cursor = conn.cursor()
 
@@ -129,15 +150,22 @@ class FileDatabase(fig.Configurable):
 		cursor.execute(query, (str(path), status))
 		if cursor.rowcount == 0:
 			return None
-		info = cursor.fetchone()
+		rawinfo = cursor.fetchone()
 
-		if info is not None:
-			hash_val, *metadata = info
-			file_hash = hash_val
-			return file_hash, metadata
+		if rawinfo is not None:
+			hash_code, *metadata = rawinfo
+			return hash_code, metadata
 
 
-	def find_duplicates(self, hash_code: str, path_prefix: Path | str = None) -> tuple[Path, tuple[str, tuple]]:
+	@lru_cache(maxsize=None)
+	def find_path(self, path: Path | str) -> RowInfo | None:
+		rawinfo = self._find_path_raw(path)
+		if rawinfo is not None:
+			hash_code, metadata = rawinfo
+			return self._RowInfo(path, hash_code, *metadata)
+
+
+	def find_duplicates(self, hash_code: str, path_prefix: Path | str = None) -> RowInfo:
 		conn = self.conn
 		cursor = conn.cursor()
 
@@ -153,7 +181,7 @@ class FileDatabase(fig.Configurable):
 
 		for row in cursor.fetchall():
 			path, *metadata = row
-			yield Path(path), metadata
+			yield self._RowInfo(path, hash_code, *metadata)
 
 
 	def find_all_duplicates(self, path_prefix: Path | str = None):
@@ -174,8 +202,8 @@ class FileDatabase(fig.Configurable):
 			cursor.execute(query, (f'{path_prefix}%',))
 
 		for row in cursor.fetchall():
-			path, file_hash, *metadata = row
-			yield Path(path), (file_hash, metadata)
+			path, hash_code, *metadata = row
+			yield self._RowInfo(path, hash_code, *metadata)
 
 
 	def exists(self, path: Path | str, status: str = 'completed') -> bool:
@@ -194,7 +222,7 @@ class FileDatabase(fig.Configurable):
 		return count > 0
 
 
-	def find_all(self, root: Path | str = None, status: str = 'completed') -> tuple[Path, tuple[str, tuple]]:
+	def find_all(self, root: Path | str = None, status: str = 'completed'):
 		conn = self.conn
 		cursor = conn.cursor()
 
@@ -209,9 +237,8 @@ class FileDatabase(fig.Configurable):
 			cursor.execute(query, (status,))
 
 		for row in cursor.fetchall():
-			path, hash_val, *metadata = row
-			file_hash = hash_val
-			yield Path(path), (file_hash, metadata)
+			path, hash_code, *metadata = row
+			yield self._RowInfo(path, hash_code, *metadata)
 
 
 

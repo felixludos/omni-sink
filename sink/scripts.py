@@ -1,15 +1,16 @@
 from pathlib import Path
 import shutil, sys, os, time
 from tqdm import tqdm
-from omnibelt import save_json
+from omnibelt import save_json, load_json
 from tabulate import tabulate
+from datetime import datetime
 import omnifig as fig
 from functools import lru_cache
 import humanize
 
 from .database import FileDatabase
 from . import misc
-from .processing import recursive_mark_crawl, identify_duplicates, recursive_leaves_crawl
+from .processing import recursive_mark_crawl, identify_duplicates, recursive_leaves_crawl, PathOrdering
 
 
 
@@ -20,45 +21,51 @@ def add_path_to_db(cfg: fig.Configuration):
 	chunksize : int = cfg.pull('chunksize', 1024*1024)
 	db = FileDatabase(db_path, chunksize=chunksize)
 
-	path: Path = Path(cfg.pulls('path', 'p')).absolute()
+	report_description = cfg.pull('description', None)
 
-	print('Marking items for processing')
+	pbar: bool = cfg.pull('pbar', True)
+
+	base_path: Path = Path(cfg.pulls('path', 'p')).absolute()
+
 	marked_paths = []
-	recursive_mark_crawl(db, marked_paths, path)
+	itr = tqdm(desc='Marking items') if pbar else None
+	recursive_mark_crawl(db, marked_paths, base_path, pbar=itr)
+	if pbar:
+		itr.close()
+		time.sleep(0.05) # to allow the previous tqdm to close
 
 	total = len(marked_paths)
 	print(f'Found {total} items to process')
 
-	report_id = db.get_report_id(cfg.pull('description', None))
-	print(f'Starting processing {path} ({total} items) with report-id {report_id}')
-
-	pbar: bool = cfg.pull('pbar', True)
+	report_id = db.get_report_id(report_description)
+	print(f'Starting processing {base_path} ({total} items) with report-id {report_id}')
 
 	start = time.time()
 
-	itr = tqdm(marked_paths) if pbar else marked_paths
+	itr = marked_paths
+	if pbar:
+		itr = tqdm(marked_paths)
+		itr.reset()
 	for mark in itr:
 		if pbar:
-			itr.set_description(str(mark.relative_to(path)))
+			itr.set_description(str(mark.relative_to(base_path)))
 
-		# info = db.find_path(path)
+		if mark.is_file():
+			savepath, info = db.process_file(mark)
 
-		if path.is_file():
-			savepath, info = db.process_file(path)
-
-		elif path.is_dir():
-			savepath, info = db.process_dir(path)
+		elif mark.is_dir():
+			savepath, info = db.process_dir(mark)
 
 		else:
-			raise ValueError(f"Unknown path type: {path}")
+			raise ValueError(f"Unknown path type: {mark}")
 
 		db.save_file_info(savepath, info)
 
 	end = time.time()
 
-	print(f'Processing took {end-start:.2f} seconds')
+	print(f'Processing took {humanize.naturaltime(end-start)} seconds')
 
-	print(f'Done processing {path}')
+	print(f'Done processing {base_path}')
 
 
 
@@ -70,40 +77,42 @@ def find_path_duplicates(cfg: fig.Configuration):
 	db_path : Path = Path(cfg.pull('db-path', misc.data_root()/'files.db'))
 	db = FileDatabase(db_path)
 
-	@lru_cache(maxsize=None)
-	def get_size(p: Path):
-		return db.find_path(p)[1][2]
+	# @lru_cache(maxsize=None)
+	# def get_size(p: Path):
+	# 	return db.find_path(p)[1][2]
 
-	base: Path = cfg.pulls('path', 'p', default=None)
-	if base is not None:
-		base = Path(base).absolute()
-	if base is None:
+	base_path: Path = cfg.pulls('path', 'p', default=None)
+	if base_path is not None:
+		base_path = Path(base_path).absolute()
+	if base_path is None:
 		raise NotImplementedError
 
 	print('Finding duplicates')
 
-	info = db.find_path(base)
-	if info is None:
-		raise ValueError(f'No info found in database for {base} (run `add` first)')
+	base = db.find_path(base_path)
+	if base is None:
+		raise ValueError(f'No info found in database for {base_path} (run `add` first)')
 
-	base_code, (base_isdir, base_count, base_size, base_modtime) = info
+	# base_code, (base_isdir, base_count, base_size, base_modtime) = info
 
-	print(f'Will find duplicates of {base}')
-	print(tabulate([['Size', humanize.naturalsize(base_size)],
-					['Count', humanize.intword(base_count)]]))
+	print(f'Will find duplicates of {base.path}')
+	print(tabulate([['Size', humanize.naturalsize(base.size)],
+					['Count', humanize.intcomma(base.count)]]))
 
 	pbar: bool = cfg.pull('pbar', True)
 	use_bytes: bool = cfg.pull('use-bytes', False)
 	@lru_cache(maxsize=None)
-	def get_increment(p: Path):
-		return db.find_path(p)[1][2 if use_bytes else 1]
+	def get_increment(path: Path):
+		item = db.find_path(path)
+		return item.size if use_bytes else item.count
 
 	print(f'Identifying duplicates')
 
+	start = time.time()
+
 	codes = {}
-	for path, (hash_code, (isdir, count, size, modtime)) in db.find_all_duplicates(base):
-		codes.setdefault(hash_code, []).append({'path': path, 'size': size, 'modtime': modtime,
-												'isdir': isdir, 'count': count})
+	for item in db.find_all_duplicates(base.path):
+		codes.setdefault(item.code, []).append(item)
 
 	print(f'{len(codes)} hashes with more than one entry')
 
@@ -113,33 +122,34 @@ def find_path_duplicates(cfg: fig.Configuration):
 
 	leaves = []
 
-	terminals = {item['path']: code for code, group in duplicates.items() for item in group}
-	terminals.update({item['path']: code for code, group in possible.items() for item in group})
+	terminals = {item.code: code for code, group in duplicates.items() for item in group}
+	terminals.update({item.path: code for code, group in possible.items() for item in group})
 
 	print(f'Finding leaves with {len(terminals)} distinct terminals.')
 
-	pbar_args = {'total': base_size, 'unit': 'B', 'unit_scale': True, 'unit_divisor': 1024} if use_bytes \
-		else {'total': len(terminals), 'unit': 'item'}
-	itr = tqdm(total=base_size, **pbar_args) if pbar else None
-	recursive_leaves_crawl(leaves, base, terminals=terminals, pbar=itr, get_increment=get_increment)
-
-	if pbar:
-		itr.close()
+	pbar_args = {'total': base.size, 'unit': 'B', 'unit_scale': True, 'unit_divisor': 1024} \
+		if use_bytes else {'total': base.count, 'unit': 'item'}
+	itr = tqdm(**pbar_args) if pbar else None
+	recursive_leaves_crawl(leaves, base.path, terminals=terminals, pbar=itr, get_increment=get_increment)
+	if pbar: itr.close()
 
 	print(f'Found {len(leaves)} leaves')
 
 	new_size = 0
 	cands = {}
-	for leaf in leaves:
-		code = terminals.get(leaf, None)
+	for path in leaves:
+		code = terminals.get(path, None)
 		if code not in cands:
-			new_size += get_size(leaf)
+			new_size += db.find_path(path).size
 		if code is not None:
-			cands.setdefault(code, []).append(leaf)
+			cands.setdefault(code, []).append(path)
 
-	print(f'Original Size: {humanize.naturalsize(base_size)}')
+	end = time.time()
+	print(f'Processing took {humanize.naturaltime(end-start)} seconds')
+
+	print(f'Original Size: {humanize.naturalsize(base.size)}')
 	print(f'New Size: {humanize.naturalsize(new_size)}')
-	print(f'Reduction: {humanize.naturalsize(base_size-new_size)} ({(base_size-new_size)/base_size*100:.2f}%)')
+	print(f'Reduction: {humanize.naturalsize(base.size-new_size)} ({(base.size-new_size)/base.size*100:.2f}%)')
 
 	# relevant = {terminals[leaf] for paths in cands.values() for leaf in paths}
 	# used_dupes = [cs[0] for cs in cands.values() if len(cs) == 1]
@@ -148,9 +158,6 @@ def find_path_duplicates(cfg: fig.Configuration):
 	groups = [group for group in cands.values() if len(group) > 1]
 
 	print(f'Found {len(groups)} candidate groups of duplicates.')
-
-	# filter out corner cases
-	# bad_key = '00000000000000000000000000000000'
 
 	if candidates_path is not None:
 		save_json([[str(path) for path in group] for group in groups], candidates_path)
@@ -167,9 +174,85 @@ def find_path_duplicates(cfg: fig.Configuration):
 
 
 
-# @fig.script('quarantine')
-# def quarantine_targets(cfg: fig.Configuration):
-# 	pass
+@fig.script('quarantine')
+def quarantine_targets(cfg: fig.Configuration):
+
+	candidates_path = Path(cfg.pulls('candidate-path', 'in', default=misc.data_root() / 'candidates.json'))
+	quarantine_root = Path(cfg.pulls('quarantine-root', 'out', default=misc.data_root() / 'quarantine'))
+
+	db_path : Path = Path(cfg.pull('db-path', misc.data_root()/'files.db'))
+	db = FileDatabase(db_path)
+
+	pbar: bool = cfg.pull('pbar', True)
+	show_top = cfg.pull('show-top', 10)
+	auto_confirm = cfg.pull('auto-confirm', False)
+
+	groups = load_json(candidates_path)
+	groups = [[Path(path) for path in group] for group in groups]
+
+	print(f'Preparing {len(groups)} candidate groups of duplicates.')
+
+	cfg.push('sorter._type', 'default-ordering', overwrite=False, silent=True)
+	sorter: PathOrdering = cfg.pull('sorter')
+
+	kill_list = []
+	for group in tqdm(groups, 'Identifying Targets') if pbar else groups:
+		sorter.inplace(group, get_info=db.find_path)
+		kill_list.extend(group[1:])
+	kill_list.sort(key=lambda path: db.find_path(path).size, reverse=True)
+	kill_size = sum(db.find_path(path).size for path in kill_list)
+	base_path = Path(os.path.commonpath([str(path) for path in kill_list]))
+
+	print()
+	print(f'Found {humanize.intcomma(len(kill_list))} items to quarantine. '
+		  f'Total size: {humanize.naturalsize(kill_size)}')
+
+	fixed = {}
+	reverse_fixed = {}
+	for path in kill_list:
+		name = path.name
+		i = 1
+		while name in fixed:
+			name = f'{path.stem}_{i}{path.suffix}'
+			i += 1
+		fixed[name] = path
+		reverse_fixed[path] = name
+
+	if show_top is not None:
+		print()
+		print(f'{"Largest" if len(kill_list) > show_top else "All"} {min(show_top, len(kill_list))} items')
+		print(tabulate([[humanize.naturalsize(db.find_path(path).size), reverse_fixed[path], path]
+						for path in kill_list[:show_top]]))
+
+	quarantine_dir = quarantine_root / 'content'
+
+	if not auto_confirm:
+		print()
+		print(f'Quarantining from {base_path} to {quarantine_dir}')
+		while True:
+			confirm = input('Confirm? [y/n] ').lower()
+			if confirm in ['y', 'yes']:
+				break
+			elif confirm in ['n', 'no']:
+				print('Quarantine aborted.')
+				return
+			else:
+				print('Invalid input.')
+
+	quarantine_dir.mkdir(parents=True, exist_ok=True)
+	save_json({
+		'base-path': str(base_path),
+		'timestamp': datetime.now().isoformat(),
+		'quarantine': {str(fixed): str(path) for fixed, path in fixed.items()},
+		'groups': [[str(path) for path in group] for group in groups],
+	}, quarantine_root / 'info.json')
+
+	print(f'Quarantining {len(kill_list)} items to {quarantine_dir}')
+	for path in tqdm(kill_list, 'Quarantining') if pbar else kill_list:
+		dest = quarantine_dir / reverse_fixed[path]
+		shutil.move(str(path), str(dest))
+
+	return fixed
 
 
 

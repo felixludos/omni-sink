@@ -1,18 +1,21 @@
 from pathlib import Path
+import omnifig as fig
 
 from . import misc
-from .database import FileDatabase
+from .database import FileDatabase, RowInfo
 
 
 
-def recursive_mark_crawl(db: FileDatabase, marked_paths: list[Path], path: Path):
+def recursive_mark_crawl(db: FileDatabase, marked_paths: list[Path], path: Path, *, pbar=None):
 	'''post order traversal of the file tree, marking all files for processing'''
 	if path != db.db_path and not db.exists(path):
 		if path.is_dir():
 			for sub in path.iterdir():
-				recursive_mark_crawl(db, marked_paths, sub)
+				recursive_mark_crawl(db, marked_paths, sub, pbar=pbar)
 
 		marked_paths.append(path)
+		if pbar is not None:
+			pbar.update(1)
 
 
 
@@ -29,16 +32,16 @@ def recursive_leaves_crawl(leaves: list[Path], path: Path, terminals: dict[Path,
 
 
 
-def identify_duplicates(clusters: dict[str, list[dict]], *, pbar=None):
+def identify_duplicates(clusters: dict[str, list[RowInfo]], *, pbar=None):
 	accepts = {}
 	maybe = {}
 	rejects = {}
 
 	itr = clusters.items() if pbar is None else pbar(clusters.items())
 	for code, items in itr:
-		names = [item['path'].name for item in items]
-		sizes = [item['size'] for item in items]
-		modtimes = [item['modtime'] for item in items]
+		names = [item.path.name for item in items]
+		sizes = [item.size for item in items]
+		modtimes = [item.modtime for item in items]
 
 		if not any(s != sizes[0] for s in sizes):
 			if not any(n != names[0] for n in names) and not any(m != modtimes[0] for m in modtimes):
@@ -50,5 +53,15 @@ def identify_duplicates(clusters: dict[str, list[dict]], *, pbar=None):
 
 	return accepts, maybe, rejects
 
+
+
+@fig.component('default-ordering')
+class PathOrdering(fig.Configurable):
+	@staticmethod
+	def _path_score(path):
+		return 'old' in str(path).lower(), len(path.parents), len(path.name), len(str(path)), path.name
+
+	def inplace(self, paths: list[Path], get_info=None):
+		paths.sort(key=self._path_score)
 
 

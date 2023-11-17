@@ -1,14 +1,15 @@
 
 _meta.script_name: add
 #_meta.script_name: dedupe
+#_meta.script_name: quarantine
 
 
-db-path: data/demo.db
-path: data/demo
+#db-path: data/demo.db
+#path: data/demo
 
 
-#db-path: data/largetest.db
-#path: "D:\\Trust\\"
+db-path: data/largetest2.db
+path: "D:\\Trust\\Backups"
 
 
 #pbar: no
