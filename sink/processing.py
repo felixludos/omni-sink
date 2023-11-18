@@ -6,16 +6,24 @@ from .database import FileDatabase, RowInfo
 
 
 
-def recursive_mark_crawl(db: FileDatabase, marked_paths: list[Path], path: Path, *, pbar=None):
+def recursive_mark_crawl(db: FileDatabase, marked_paths: list[Path], skipped: list[Path],
+						 path: Path, ignore_names: set[str], *, pbar=None):
 	'''post order traversal of the file tree, marking all files for processing'''
-	if path != db.db_path and not db.exists(path):
-		if path.is_dir():
-			for sub in path.iterdir():
-				recursive_mark_crawl(db, marked_paths, sub, pbar=pbar)
+	if path != db.db_path and path.name not in ignore_names and not db.exists(path):
+		try:
+			if path.is_dir():
+				for sub in path.iterdir():
+					recursive_mark_crawl(db, marked_paths, skipped, sub, ignore_names, pbar=pbar)
 
-		marked_paths.append(path)
-		if pbar is not None:
-			pbar.update(1)
+		except PermissionError:
+			skipped.append(path)
+			if pbar is not None:
+				pbar.update(1)
+
+		else:
+			marked_paths.append(path)
+			if pbar is not None:
+				pbar.update(1)
 
 
 

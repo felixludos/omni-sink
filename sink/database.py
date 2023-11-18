@@ -13,7 +13,6 @@ from . import misc
 class RowInfo:
 	path: Path
 	code: str = None
-	isdir: bool = None
 	count: int = None
 	size: int = None
 	modtime: float = None
@@ -23,8 +22,8 @@ class RowInfo:
 		return datetime.fromtimestamp(self.modtime)
 
 	def __post_init__(self):
-		self.path = Path(self.path)
-		self.isdir = bool(self.isdir)
+		if isinstance(self.path, str):
+			self.path = Path(self.path)
 
 
 @fig.component('file-db')
@@ -53,7 +52,6 @@ class FileDatabase(fig.Configurable):
 				report INTEGER NOT NULL,
 				status TEXT,
 				hash TEXT,
-				isdir INTEGER,
 				filecount INTEGER,
 				filesize INTEGER,
 				modification_time REAL,
@@ -96,16 +94,18 @@ class FileDatabase(fig.Configurable):
 		if len(content_info) == 0:
 			hashes = []
 			dirsize = 0
+			dircount = 0
 		else:
 			hashes, metadatas = zip(*content_info)
-			_, _, filesizes, _ = zip(*metadatas)
-			dirsize = sum(filesizes)
+			counts, sizes, _ = zip(*metadatas)
+			dircount = sum(cnt or 1 for cnt in counts)
+			dirsize = sum(sizes)
 
 		directory_hash = self.compute_directory_hash(hashes)
 		modification_time = dir_path.stat().st_mtime
 		# modification_time = os.path.getmtime(dir_path)
 
-		metadata = True, len(content_info), dirsize, modification_time
+		metadata = dircount, dirsize, modification_time
 		return dir_path, (directory_hash, metadata)
 
 
@@ -114,7 +114,7 @@ class FileDatabase(fig.Configurable):
 
 		size, modification_time = file_path.stat().st_size, file_path.stat().st_mtime
 		# size, modification_time = os.path.getsize(file_path), os.path.getmtime(file_path)
-		metadata = False, 0, size, modification_time
+		metadata = None, size, modification_time
 		return file_path, (file_hash, metadata)
 
 
@@ -135,8 +135,8 @@ class FileDatabase(fig.Configurable):
 		hash_code, metadata = raw_info
 
 		cursor.execute('''
-			INSERT OR REPLACE INTO files (path, report, status, hash, isdir, filecount, filesize, modification_time)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			INSERT OR REPLACE INTO files (path, report, status, hash, filecount, filesize, modification_time)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
 		''', (str(file_path), self.get_report_id(), status, hash_code, *metadata))
 		conn.commit()
 
@@ -145,7 +145,7 @@ class FileDatabase(fig.Configurable):
 		conn = self.conn
 		cursor = conn.cursor()
 
-		query = ('SELECT hash, isdir, filecount, filesize, modification_time '
+		query = ('SELECT hash, filecount, filesize, modification_time '
 				 'FROM files WHERE path=? AND status=?')
 		cursor.execute(query, (str(path), status))
 		if cursor.rowcount == 0:
@@ -170,12 +170,12 @@ class FileDatabase(fig.Configurable):
 		cursor = conn.cursor()
 
 		if path_prefix is None:
-			query = ('SELECT path, isdir, filecount, filesize, modification_time '
+			query = ('SELECT path, filecount, filesize, modification_time '
 					 'FROM files WHERE hash=?')
 			cursor.execute(query, (hash_code,))
 
 		else:
-			query = ('SELECT path, isdir, filecount, filesize, modification_time '
+			query = ('SELECT path, filecount, filesize, modification_time '
 					 'FROM files WHERE hash=? AND path LIKE ?')
 			cursor.execute(query, (hash_code, f'{path_prefix}%'))
 
@@ -189,13 +189,13 @@ class FileDatabase(fig.Configurable):
 		cursor = conn.cursor()
 
 		if path_prefix is None:
-			query = ('SELECT path, hash, isdir, filecount, filesize, modification_time '
+			query = ('SELECT path, hash, filecount, filesize, modification_time '
 					 'FROM files '
 					 'WHERE hash IN (SELECT hash FROM files GROUP BY hash HAVING COUNT(*) > 1) AND filesize > 0')
 			cursor.execute(query)
 
 		else:
-			query = ('SELECT path, hash, isdir, filecount, filesize, modification_time '
+			query = ('SELECT path, hash, filecount, filesize, modification_time '
 					 'FROM files '
 					 'WHERE hash IN (SELECT hash FROM files GROUP BY hash HAVING COUNT(*) > 1) '
 					 'AND filesize > 0 AND path LIKE ?')
@@ -227,12 +227,12 @@ class FileDatabase(fig.Configurable):
 		cursor = conn.cursor()
 
 		if root:
-			query = ('SELECT path, hash, isdir, filecount, filesize, modification_time '
+			query = ('SELECT path, hash, filecount, filesize, modification_time '
 					 'FROM files WHERE status=? AND path LIKE ?')
 			cursor.execute(query, (status, f'{root}%'))
 
 		else:
-			query = ('SELECT path, hash, isdir, filecount, filesize, modification_time '
+			query = ('SELECT path, hash, filecount, filesize, modification_time '
 					 'FROM files WHERE status=?')
 			cursor.execute(query, (status,))
 

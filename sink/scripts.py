@@ -1,6 +1,7 @@
 from pathlib import Path
 import shutil, sys, os, time
 from tqdm import tqdm
+import textwrap
 from omnibelt import save_json, load_json
 from tabulate import tabulate
 from datetime import datetime, timedelta
@@ -21,6 +22,8 @@ def add_path_to_db(cfg: fig.Configuration):
 	chunksize : int = cfg.pull('chunksize', 1024*1024)
 	db = FileDatabase(db_path, chunksize=chunksize)
 
+	ignore_path_names = cfg.pull('ignore-path-names', ['omni-sink-quarantine', '$RECYCLE.BIN'])
+	ignore_path_names = set(ignore_path_names)
 	report_description = cfg.pull('description', None)
 
 	pbar: bool = cfg.pull('pbar', True)
@@ -28,11 +31,17 @@ def add_path_to_db(cfg: fig.Configuration):
 	base_path: Path = Path(cfg.pulls('path', 'p')).absolute()
 
 	marked_paths = []
+	skipped_paths = []
 	itr = tqdm(desc='Marking items') if pbar else None
-	recursive_mark_crawl(db, marked_paths, base_path, pbar=itr)
+	recursive_mark_crawl(db, marked_paths, skipped_paths, base_path, ignore_names=ignore_path_names, pbar=itr)
 	if pbar:
 		itr.close()
 		time.sleep(0.05) # to allow the previous tqdm to close
+
+	print(f'Skipped {len(skipped_paths)} items due to permission errors.')
+	if len(skipped_paths):
+		print(tabulate([[str(path)] for path in skipped_paths], headers=['Skipped Paths']))
+		print()
 
 	total = len(marked_paths)
 	print(f'Found {total} items to process')
@@ -63,7 +72,7 @@ def add_path_to_db(cfg: fig.Configuration):
 
 	end = time.time()
 
-	print(f'Processing took {humanize.precisedelta(timedelta(seconds=end-start))} seconds')
+	print(f'Processing took {humanize.precisedelta(timedelta(seconds=end-start))}')
 
 	print(f'Done processing {base_path}')
 
@@ -88,7 +97,7 @@ def find_path_duplicates(cfg: fig.Configuration):
 		raise NotImplementedError
 
 	pbar: bool = cfg.pull('pbar', True)
-	use_bytes: bool = cfg.pull('use-bytes', False)
+	use_bytes: bool = cfg.pull('use-bytes', True)
 
 	# print('Finding duplicates')
 
@@ -119,14 +128,15 @@ def find_path_duplicates(cfg: fig.Configuration):
 
 	duplicates, possible, rejects = identify_duplicates(codes, pbar=tqdm if pbar else None)
 
-	print(f'Found {len(duplicates)} duplicate items ({len(possible)} possible, {len(rejects)} rejects)')
+	print(f'Found {humanize.intcomma(len(duplicates))} duplicate items '
+		  f'({humanize.intcomma(len(possible))} possible, {humanize.intcomma(len(rejects))} rejects)')
 
 	leaves = []
 
 	terminals = {item.code: code for code, group in duplicates.items() for item in group}
 	terminals.update({item.path: code for code, group in possible.items() for item in group})
 
-	print(f'Finding leaves with {len(terminals)} distinct terminals.')
+	print(f'Finding leaves with {humanize.intcomma(len(terminals))} distinct terminals.')
 
 	pbar_args = {'total': base.size, 'unit': 'B', 'unit_scale': True, 'unit_divisor': 1024} \
 		if use_bytes else {'total': base.count, 'unit': 'item'}
@@ -146,7 +156,7 @@ def find_path_duplicates(cfg: fig.Configuration):
 			cands.setdefault(code, []).append(path)
 
 	end = time.time()
-	print(f'Processing took {humanize.precisedelta(timedelta(seconds=end-start))} seconds')
+	print(f'Processing took {humanize.precisedelta(timedelta(seconds=end-start))}')
 
 	print(f'Original Size: {humanize.naturalsize(base.size)}')
 	print(f'New Size: {humanize.naturalsize(new_size)}')
@@ -179,7 +189,13 @@ def find_path_duplicates(cfg: fig.Configuration):
 def quarantine_targets(cfg: fig.Configuration):
 
 	candidates_path = Path(cfg.pulls('candidate-path', 'in', default=misc.data_root() / 'candidates.json'))
-	quarantine_root = Path(cfg.pulls('quarantine-root', 'out', default=misc.data_root() / 'quarantine'))
+	quarantine_root = cfg.pulls('quarantine-root', 'out', default=None)
+	if quarantine_root is None:
+		base_path = cfg.pulls('path', 'p', default=None, silent=True)
+		if base_path is not None:
+			quarantine_root = Path(base_path).absolute() / 'omni-sink-quarantine'
+		else:
+			raise ValueError('Must provide either `quarantine-root` or `path`')
 
 	db_path : Path = Path(cfg.pull('db-path', misc.data_root()/'files.db'))
 	db = FileDatabase(db_path)
@@ -196,11 +212,10 @@ def quarantine_targets(cfg: fig.Configuration):
 	cfg.push('sorter._type', 'default-ordering', overwrite=False, silent=True)
 	sorter: PathOrdering = cfg.pull('sorter')
 
-	kill_list = []
 	for group in tqdm(groups, 'Identifying Targets') if pbar else groups:
 		sorter.inplace(group, get_info=db.find_path)
-		kill_list.extend(group[1:])
-	kill_list.sort(key=lambda path: db.find_path(path).size, reverse=True)
+	groups.sort(key=lambda group: db.find_path(group[0]).size, reverse=True)
+	kill_list = [target for group in groups for target in group[1:]]
 	kill_size = sum(db.find_path(path).size for path in kill_list)
 	base_path = Path(os.path.commonpath([str(path) for path in kill_list]))
 
@@ -214,16 +229,22 @@ def quarantine_targets(cfg: fig.Configuration):
 		name = path.name
 		i = 1
 		while name in fixed:
-			name = f'{path.stem}_{i}{path.suffix}'
+			name = f'{path.stem} ({i}){path.suffix}'
 			i += 1
 		fixed[name] = path
 		reverse_fixed[path] = name
 
 	if show_top is not None:
 		print()
-		print(f'{"Largest" if len(kill_list) > show_top else "All"} {min(show_top, len(kill_list))} items')
-		print(tabulate([[humanize.naturalsize(db.find_path(path).size), reverse_fixed[path], path]
-						for path in kill_list[:show_top]]))
+		print(f'{"Largest" if len(groups) > show_top else "All"} {min(show_top, len(groups))} items')
+		print(tabulate([[humanize.naturalsize(db.find_path(group[0]).size),
+						 len(group),
+						 '\n'.join(reverse_fixed.get(path, '-') for path in group),
+						 '\n'.join(str(path) for path in group)
+						 ] for group in groups[:show_top]],
+					   headers=['Size', 'Occ.', 'Quarantined Name', 'Original Path']))
+		if len(groups) > show_top:
+			print(f'--- and {len(groups) - show_top} more ---')
 
 	quarantine_dir = quarantine_root / 'content'
 

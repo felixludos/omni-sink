@@ -1,6 +1,6 @@
 
-#_meta.script_name: add
-_meta.script_name: dedupe
+_meta.script_name: add
+#_meta.script_name: dedupe
 #_meta.script_name: quarantine
 
 
@@ -8,10 +8,10 @@ _meta.script_name: dedupe
 #path: data/demo
 
 
-db-path: data/largetest2.db
-path: "D:\\Trust\\Backups"
+db-path: data/tartarus.db
+path: "D:\\"
 
-
+show-top: 100
 #pbar: no
 
 
