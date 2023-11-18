@@ -55,20 +55,33 @@ def add_path_to_db(cfg: fig.Configuration):
 	if pbar:
 		itr = tqdm(marked_paths)
 		itr.reset()
-	for mark in itr:
+
+	try:
+
+		for mark in itr:
+			if pbar:
+				itr.set_description(str(mark.relative_to(base_path)))
+
+			if mark.is_file():
+				savepath, info = db.process_file(mark)
+
+			elif mark.is_dir():
+				savepath, info = db.process_dir(mark)
+
+			else:
+				raise ValueError(f"Unknown path type: {mark}")
+
+			db.save_file_info(savepath, info)
+
+	except KeyboardInterrupt:
 		if pbar:
-			itr.set_description(str(mark.relative_to(base_path)))
+			itr.close()
+		print('Interrupted. Saving database.')
+		# db.close()
 
-		if mark.is_file():
-			savepath, info = db.process_file(mark)
-
-		elif mark.is_dir():
-			savepath, info = db.process_dir(mark)
-
-		else:
-			raise ValueError(f"Unknown path type: {mark}")
-
-		db.save_file_info(savepath, info)
+		end = time.time()
+		print(f'Processing took {humanize.precisedelta(timedelta(seconds=end-start))}')
+		raise
 
 	end = time.time()
 
