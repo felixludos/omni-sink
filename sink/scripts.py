@@ -22,7 +22,8 @@ def add_path_to_db(cfg: fig.Configuration):
 	chunksize : int = cfg.pull('chunksize', 1024*1024)
 	db = FileDatabase(db_path, chunksize=chunksize)
 
-	ignore_path_names = cfg.pull('ignore-path-names', ['omni-sink-quarantine', '$RECYCLE.BIN'])
+	ignore_path_names = cfg.pull('ignore-path-names',
+								 ['omni-sink-quarantine', '$RECYCLE.BIN', 'Recovery'])
 	ignore_path_names = set(ignore_path_names)
 	report_description = cfg.pull('description', None)
 
@@ -51,27 +52,33 @@ def add_path_to_db(cfg: fig.Configuration):
 
 	start = time.time()
 
+	failures = []
+
 	itr = marked_paths
 	if pbar:
 		itr = tqdm(marked_paths)
 		itr.reset()
 
 	try:
-
 		for mark in itr:
 			if pbar:
-				itr.set_description(str(mark.relative_to(base_path)))
+				itr.set_description(f'{len(failures)} | {mark.relative_to(base_path)}')
 
-			if mark.is_file():
-				savepath, info = db.process_file(mark)
+			try:
+				if mark.is_file():
+					savepath, info = db.process_file(mark)
+				elif mark.is_dir():
+					savepath, info = db.process_dir(mark, ignore_path_names)
+				else:
+					# raise ValueError(f"Unknown path type: {mark}")
+					failures.append(mark)
+					continue
 
-			elif mark.is_dir():
-				savepath, info = db.process_dir(mark)
+			except PermissionError:
+				failures.append(mark)
 
 			else:
-				raise ValueError(f"Unknown path type: {mark}")
-
-			db.save_file_info(savepath, info)
+				db.save_file_info(savepath, info)
 
 	except KeyboardInterrupt:
 		if pbar:
@@ -86,6 +93,9 @@ def add_path_to_db(cfg: fig.Configuration):
 	end = time.time()
 
 	print(f'Processing took {humanize.precisedelta(timedelta(seconds=end-start))}')
+
+	if len(failures):
+		print(tabulate([[str(path)] for path in failures], headers=['Failed Paths']))
 
 	print(f'Done processing {base_path}')
 

@@ -118,9 +118,11 @@ class FileDatabase(fig.Configurable):
 		return file_path, (file_hash, metadata)
 
 
-	def process_dir(self, dir_path: Path) -> tuple[Path, tuple[str, tuple]]:
+	def process_dir(self, dir_path: Path, ignore_names) -> tuple[Path, tuple[str, tuple]]:
 		contents = []
 		for content_path in dir_path.iterdir():
+			if content_path == self.db_path or content_path.name in ignore_names or not content_path.exists():
+				continue
 			rawinfo = self._find_path_raw(content_path)
 			if rawinfo is None:
 				raise ValueError(f'Missing path: {content_path}')

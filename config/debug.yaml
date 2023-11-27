@@ -7,11 +7,10 @@ _meta.script_name: add
 #db-path: data/demo.db
 #path: data/demo
 
-
 db-path: data/tartarus.db
 path: "D:\\"
 
-show-top: 100
+#show-top: 100
 #pbar: no
 
 

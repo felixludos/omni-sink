@@ -9,7 +9,7 @@ from .database import FileDatabase, RowInfo
 def recursive_mark_crawl(db: FileDatabase, marked_paths: list[Path], skipped: list[Path],
 						 path: Path, ignore_names: set[str], *, pbar=None):
 	'''post order traversal of the file tree, marking all files for processing'''
-	if path != db.db_path and path.name not in ignore_names and not db.exists(path):
+	if path != db.db_path and path.name not in ignore_names and path.exists() and not db.exists(path):
 		try:
 			if path.is_dir():
 				for sub in path.iterdir():

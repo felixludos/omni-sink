@@ -1,0 +1,7 @@
+
+ignore-path-names: ['omni-sink-quarantine', '$RECYCLE.BIN', 'Recovery', 'DumpStack.log', 'DumpStack.log.tmp',
+                    'System Volume Information', '@eaDir', '@tmp']
+
+
+show-top: 100
+
